@@ -1,8 +1,8 @@
 import {
-  Platform, SafeAreaView, StyleSheet,
+  SafeAreaView, StyleSheet,
   Text, TouchableOpacity, View,
-  StatusBar, ScrollView, Image,
-  Modal, FlatList
+  StatusBar, Image, FlatList,
+  ScrollView
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from "react";
@@ -10,14 +10,11 @@ import * as ImagePicker from "expo-image-picker";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { addDoc, collection, onSnapshot } from "firebase/firestore";
 import { db, storage } from "../firebaseConfig";
-import ProgressBar from '../Components/ProgressBar';
+import UploadProgressBar from '../Components/UploadProgressBar';
 
-
-
-
-const Home = ({ navigation }) => {
-  const [image, setImage] = useState(null);
-  const [progress, setProgress] = useState(0);
+const Home = () => {
+  const [images, setImages] = useState([]);
+  const [progress, setProgress] = useState([]);
   const [files, setFiles] = useState([]);
 
   useEffect(() => {
@@ -32,21 +29,21 @@ const Home = ({ navigation }) => {
     return () => unsubscribe();
   }, []);
 
-
   async function pickImage() {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       quality: 1,
-      allowsEditing: true,
+      allowsMultipleSelection: true,
     });
 
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
-      await uploadImage(result.assets[0].uri, "image");
+    if (!result.cancelled) {
+      const newImages = result.assets.map((asset) => asset.uri);
+      setImages(newImages);
+      await Promise.all(newImages.map(uploadImage));
     }
   }
 
-  async function uploadImage(uri, fileType) {
+  async function uploadImage(uri) {
     const response = await fetch(uri);
     const blob = await response.blob();
 
@@ -59,15 +56,21 @@ const Home = ({ navigation }) => {
         const progress =
           (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
         console.log("Upload is " + progress + "% done");
-        setProgress(progress.toFixed());
+        setProgress((prevProgress) => ({
+          ...prevProgress,
+          [uri]: progress.toFixed(),
+        }));
       },
       (error) => {
+        console.error("Error uploading image: ", error);
       },
       () => {
         getDownloadURL(uploadTask.snapshot.ref).then(async (downloadURL) => {
           console.log("File available at", downloadURL);
-          await saveRecord(fileType, downloadURL, new Date().toISOString());
-          setImage("");
+          await saveRecord("image", downloadURL, new Date().toISOString());
+          setImages((prevImages) =>
+            prevImages.filter((img) => img !== uri)
+          );
         });
       }
     );
@@ -75,17 +78,16 @@ const Home = ({ navigation }) => {
 
   async function saveRecord(fileType, url, createdAt) {
     try {
-      const docRef = await addDoc(collection(db, "files"), {
+      await addDoc(collection(db, "files"), {
         fileType,
         url,
         createdAt,
       });
-      console.log("document saved correctly", docRef.id);
+      console.log("Document saved correctly");
     } catch (e) {
-      console.log(e);
+      console.error("Error saving document: ", e);
     }
   }
-
 
   return (
     <SafeAreaView>
@@ -119,15 +121,19 @@ const Home = ({ navigation }) => {
         </TouchableOpacity>
       </View>
 
+      <ScrollView>
       <View style={{marginTop: 20, alignItems: 'center', justifyContent: 'center'}}>
-      {image && <ProgressBar image={image} progress={progress} />}
+        {images.map((uri, index) => (
+          <UploadProgressBar key={index} image={uri} progress={progress[uri] || 0} />
+        ))}
       </View>
 
+      
       <View style={{ alignItems: 'center' }}>
         <Image source={require('../assets/Photoruum-black-text.jpg')}
           style={{ height: 100, width: 300 }} />
       </View>
-
+      </ScrollView>
     </SafeAreaView>
   );
 }
